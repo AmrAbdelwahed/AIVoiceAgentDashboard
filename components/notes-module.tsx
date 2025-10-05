@@ -17,6 +17,7 @@ export function NotesModule() {
   const [notes, setNotes] = useState<Note[]>([])
   const [followUps, setFollowUps] = useState<FollowUp[]>([])
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [activeTab, setActiveTab] = useState("notes")
@@ -25,7 +26,7 @@ export function NotesModule() {
   const [showCustomerDialog, setShowCustomerDialog] = useState(false)
   const [showNoteDialog, setShowNoteDialog] = useState(false)
   const [customerForm, setCustomerForm] = useState({
-    phone_number: "",
+    phone_number: "+1",
     name: "",
     email: "",
     company: "",
@@ -38,29 +39,92 @@ export function NotesModule() {
   })
 
   useEffect(() => {
-    fetchData()
+    // Only do initial load with sync
+    loadDataWithSync()
   }, [])
 
-  const fetchData = async () => {
+  const loadDataWithSync = async () => {
     try {
       setLoading(true)
-      const [customersRes, notesRes] = await Promise.all([fetch("/api/crm/customers"), fetch("/api/crm/notes")])
-
-      if (customersRes.ok) {
-        const customersData = await customersRes.json()
-        setCustomers(customersData.customers || [])
-      }
-
-      if (notesRes.ok) {
-        const notesData = await notesRes.json()
-        setNotes(notesData.notes || [])
-      }
+      
+      // First, sync with Airtable
+      await syncAirtableData()
+      
+      // Then fetch all data (including newly synced customers)
+      await fetchData()
+      
     } catch (error) {
-      console.error("Error fetching CRM data:", error)
+      console.error("Error loading data:", error)
     } finally {
       setLoading(false)
     }
   }
+
+  const fetchData = async () => {
+  try {
+    // Add cache-busting timestamp to prevent stale data
+    const timestamp = Date.now()
+    const [customersRes, notesRes] = await Promise.all([
+      fetch(`/api/crm/customers?limit=1000&_t=${timestamp}`),
+      fetch(`/api/crm/notes?_t=${timestamp}`)
+    ])
+
+    if (customersRes.ok) {
+      const customersData = await customersRes.json()
+      console.log("✅ Fetched customers:", customersData.customers?.length || 0)
+      setCustomers(customersData.customers || [])
+    } else {
+      console.error("❌ Failed to fetch customers:", await customersRes.text())
+    }
+
+    if (notesRes.ok) {
+      const notesData = await notesRes.json()
+      console.log("✅ Fetched notes:", notesData.notes?.length || 0)
+      setNotes(notesData.notes || [])
+    }
+  } catch (error) {
+    console.error("❌ Error fetching CRM data:", error)
+  }
+}
+
+const syncAirtableData = async () => {
+  try {
+    setSyncing(true)
+    console.log("🔄 Starting Airtable sync...")
+    
+    const response = await fetch("/api/crm/sync-airtable", {
+      method: "POST",
+    })
+
+    if (response.ok) {
+      const result = await response.json()
+      console.log("✅ Airtable sync complete:", result.summary)
+      
+      if (result.skippedRecords && result.skippedRecords.length > 0) {
+        console.warn("⚠️ Skipped records:", result.skippedRecords)
+      }
+      
+      // Wait a bit for DB to commit, then refetch
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      // Refetch customers to update UI
+      await fetchData()
+      console.log("🔄 UI refreshed after sync")
+      
+    } else {
+      console.error("❌ Airtable sync failed:", await response.text())
+    }
+  } catch (error) {
+    console.error("❌ Error syncing Airtable:", error)
+  } finally {
+    setSyncing(false)
+  }
+}
+
+const handleManualRefresh = async () => {
+  // Just call syncAirtableData - it handles everything
+  await syncAirtableData()
+}
 
   const createCustomer = async () => {
     try {
@@ -73,7 +137,7 @@ export function NotesModule() {
       if (response.ok) {
         const { customer } = await response.json()
         setCustomers([customer, ...customers])
-        setCustomerForm({ phone_number: "", name: "", email: "", company: "" })
+        setCustomerForm({ phone_number: "+1", name: "", email: "", company: "" })
         setShowCustomerDialog(false)
       }
     } catch (error) {
@@ -152,7 +216,9 @@ export function NotesModule() {
             <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
               Notes & CRM
             </h1>
-            <p className="text-slate-400 mt-2">Manage customer relationships and call notes</p>
+            <p className="text-slate-400 mt-2">
+              Loading and syncing with Airtable...
+            </p>
           </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -179,7 +245,14 @@ export function NotesModule() {
           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
             Notes & CRM
           </h1>
-          <p className="text-slate-400 mt-2">Manage customer relationships and call notes</p>
+          <p className="text-slate-400 mt-2">
+            Manage customer relationships and call notes
+            {syncing && (
+              <span className="ml-2 text-xs text-blue-400 animate-pulse">
+                • Syncing with Airtable...
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <Dialog open={showCustomerDialog} onOpenChange={setShowCustomerDialog}>
@@ -200,9 +273,19 @@ export function NotesModule() {
                 <Input
                   placeholder="Phone Number *"
                   value={customerForm.phone_number}
-                  onChange={(e) => setCustomerForm({ ...customerForm, phone_number: e.target.value })}
+                  onChange={(e) => {
+                    let input = e.target.value;
+
+                    // If the user tries to delete '+1', restore it
+                    if (!input.startsWith('+1')) {
+                      input = '+1' + input.replace(/[^0-9]/g, '').replace(/^1+/, '');
+                    }
+
+                    setCustomerForm({ ...customerForm, phone_number: input });
+                  }}
                   className="bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-400"
                 />
+
                 <Input
                   placeholder="Name"
                   value={customerForm.name}
@@ -295,11 +378,12 @@ export function NotesModule() {
           </Dialog>
 
           <Button
-            onClick={fetchData}
+            onClick={handleManualRefresh}
             variant="outline"
             className="border-slate-600 text-slate-300 hover:bg-slate-700/50 hover:border-blue-400 bg-transparent"
+            disabled={syncing}
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
           </Button>
         </div>
       </div>

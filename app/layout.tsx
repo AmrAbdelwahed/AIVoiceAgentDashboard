@@ -1,11 +1,12 @@
 import type React from "react"
 import type { Metadata } from "next"
+import { AssistantProvider } from "@/lib/assistant-context"
 import "./globals.css"
 
 export const metadata: Metadata = {
   title: "VoiceAI Dashboard",
   description: "AI Voice Agent Dashboard for Restaurant Management",
-    generator: 'v0.app'
+  generator: 'v0.app'
 }
 
 export default function RootLayout({
@@ -15,7 +16,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <AssistantProvider>
+          {children}
+        </AssistantProvider>
+      </body>
     </html>
   )
 }
