@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { Search, Plus, StickyNote, User, Phone, Mail, Building, Pin, PinOff, Clock, RefreshCw } from "lucide-react"
+import { Search, Plus, StickyNote, User, Phone, Mail, Building, Pin, PinOff, Clock, RefreshCw, Trash2 } from "lucide-react"
 import type { Customer, Note, FollowUp } from "@/lib/types/crm"
 
 export function NotesModule() {
@@ -59,6 +59,20 @@ export function NotesModule() {
       setLoading(false)
     }
   }
+
+  const deleteNote = async (noteId: string) => {
+  try {
+    const response = await fetch(`/api/crm/notes/${noteId}`, {
+      method: "DELETE",
+    })
+
+    if (response.ok) {
+      setNotes(notes.filter((note) => note.id !== noteId))
+    }
+  } catch (error) {
+    console.error("Error deleting note:", error)
+  }
+}
 
   const fetchData = async () => {
   try {
@@ -452,7 +466,20 @@ const handleManualRefresh = async () => {
                         <Clock className="w-3 h-3" />
                         {new Date(note.created_at).toLocaleDateString()}
                       </span>
-                      {note.is_pinned && <Pin className="w-3 h-3 text-yellow-400" />}
+                      <div className="flex items-center gap-2">
+                        {note.is_pinned && <Pin className="w-3 h-3 text-yellow-400" />}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            deleteNote(note.id)
+                          }}
+                          className="text-slate-400 hover:text-red-400 p-1 h-auto"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
